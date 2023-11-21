@@ -4,8 +4,10 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections;
 using System.Collections.ObjectModel;
+using timezone.Api.Models;
 using timezone.DataBase;
 using timezone.Models;
+using timezone.Services;
 
 namespace timezone.Controllers
 {
@@ -14,58 +16,56 @@ namespace timezone.Controllers
     public class OfferController : ControllerBase
     {
         private readonly TimeDBContext _dbContext;
+        private readonly TimeZoneConversion _timeZoneConversion;
+        private readonly OfferValidCheck _offerValidCheck;
 
-        public OfferController(TimeDBContext dbContext)
+        public OfferController(TimeDBContext dbContext, TimeZoneConversion timeZoneConversion, OfferValidCheck offerValidCheck)
         {
             _dbContext = dbContext;
+            _timeZoneConversion = timeZoneConversion;
+            _offerValidCheck = offerValidCheck;
         }
 
         [HttpPost]
         public async Task<IActionResult> AddOffer([FromBody] OfferModel offerRequest)
         {
+            var inTimeZoneId = "Europe/London";
             offerRequest.Id = Guid.NewGuid();
-            DateTime inTime = offerRequest.Time;
-            //TimeZoneInfo convertTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
-            TimeZoneInfo convertTimeZone = TimeZoneInfo.Local;
-
-            DateTimeOffset targetDateTimeOffset = new DateTimeOffset(inTime, TimeSpan.Zero);
-            DateTime utcDateTime = TimeZoneInfo.ConvertTimeToUtc(targetDateTimeOffset.DateTime, convertTimeZone);
-            offerRequest.Time = utcDateTime;
+   
+            offerRequest.StartTime = _timeZoneConversion.ToUctTime(offerRequest.StartTime,inTimeZoneId);
+            offerRequest.EndTime = _timeZoneConversion.ToUctTime(offerRequest.EndTime,inTimeZoneId);
             await _dbContext.AddAsync(offerRequest);
             await _dbContext.SaveChangesAsync();
             return Ok(offerRequest);
-
         }
 
         [HttpGet]
         public async Task<IActionResult> GetOffer()
         {
-            //DateTime utcTime = new DateTime(2023, 05, 15, 10, 0, 0);
-            //TimeZoneInfo targetTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
-            //if (targetTimeZone.IsDaylightSavingTime(utcTime))
-            //{
-            //    return Ok("YES DST ZONE");
-            //}
-            //return Ok("NO");
-
+            var outTimeZoneId = "Europe/London";
             var offers = await _dbContext.OfferModels.ToListAsync();
-
+            var offerResponseList = new List<OfferResponseModel>();
             foreach (var item in offers)
             {
-                var utcTime = item.Time;
+                var msg = _offerValidCheck.OfferMessage(item.StartTime,item.EndTime);
+                item.StartTime = _timeZoneConversion.ToOutTime(item.StartTime,outTimeZoneId);
+                item.EndTime = _timeZoneConversion.ToOutTime(item.EndTime,outTimeZoneId);
 
-                //TimeZoneInfo convertTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
-                TimeZoneInfo convertTimeZone = TimeZoneInfo.Local;
 
-                DateTimeOffset storedDateTimeOffset = new DateTimeOffset(utcTime, TimeSpan.Zero);
-                DateTimeOffset targetDateTimeOffset = TimeZoneInfo.ConvertTime(storedDateTimeOffset, convertTimeZone);
-                DateTime outTime = targetDateTimeOffset.DateTime;
-                item.Time = outTime;
+                var offerResponse = new OfferResponseModel()
+                {
+                    Id = item.Id,
+                    Name = item.Name,
+                    StartTime = item.StartTime,
+                    EndTime = item.EndTime,
+                    validOfferMsg = msg,
+                    currentTime = DateTime.UtcNow
+                };
+                offerResponseList.Add(offerResponse);
+                
             }
-
-            return Ok(offers);
+            return Ok(offerResponseList);
         }
-
 
     }
 }
